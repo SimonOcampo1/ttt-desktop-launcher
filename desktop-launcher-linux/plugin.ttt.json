@@ -1,0 +1,12 @@
+{
+  "name": "desktop-launcher-linux",
+  "displayName": "Desktop Launcher (Linux)",
+  "description": "Add ttt to your desktop's app launcher, opening in the terminal you installed it from",
+  "version": "0.1.0",
+  "author": "SimonOcampo1",
+  "entry": "init.lua",
+  "permissions": {
+    "commands": true,
+    "system.exec": ["sh"]
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "desktop-launcher-macos",
+  "displayName": "Desktop Launcher (macOS)",
+  "description": "Add a TTT app to ~/Applications that opens ttt in your terminal, including files double-clicked in Finder",
+  "version": "0.1.0",
+  "author": "SimonOcampo1",
+  "entry": "init.lua",
+  "permissions": {
+    "commands": true,
+    "system.exec": ["sh"]
+  }
+}
