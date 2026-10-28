@@ -3,7 +3,8 @@ local sys = require("ttt.system")
 
 local function launcher(action)
   local exe = ttt.executable_path and ttt.executable_path() or ""
-  local res = sys.exec("sh", { ttt.plugin_dir() .. "/launcher.sh", action, exe or "" })
+  local config = ttt.plugin_dir():gsub("/+$", ""):match("^(.*)/plugins/[^/]+$")
+  local res = sys.exec("sh", { ttt.plugin_dir() .. "/launcher.sh", action, exe or "", config or "" })
   if res.exit_code ~= 0 then
     local msg = res.stderr:gsub("%s+$", "")
     error(msg ~= "" and msg or ("launcher.sh " .. action .. " failed"), 0)
@@ -29,8 +30,8 @@ ttt.register({
     },
     {
       id = "desktopLauncher.setDefaults",
-      title = "Desktop Launcher: Open Markdown and JSON with ttt",
-      handler = command("set-defaults", "Finder now opens Markdown and JSON files in ttt"),
+      title = "Desktop Launcher: Open code files with ttt",
+      handler = command("set-defaults", "Finder now opens code files in ttt"),
     },
   },
 })

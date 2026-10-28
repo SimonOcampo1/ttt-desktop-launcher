@@ -23,7 +23,9 @@ Both plugins ask for two permissions: registering commands, and running `sh`, wh
 ## Commands
 
 - **Desktop Launcher: Repair**: rewrite the launcher, for instance after moving ttt or to switch it to the terminal you are in now.
-- **Desktop Launcher: Open Markdown and JSON with ttt** (macOS): make TTT.app the default for `.md` and `.json` in Finder. The previous default apps are remembered and restored when you uninstall the plugin.
+- **Desktop Launcher: Open code files with ttt** (macOS): make TTT.app the Finder default for the extensions in `desktop-launcher-macos/extensions.txt`, except `.htm`, `.html`, `.xhtml` and `.shtml`, which keep their browser. macOS may ask you to confirm changes. Previous default apps are remembered across repeated runs and Repair, and restored on uninstall. A failed restore keeps the app and recovery data so you can retry. Older snapshots with empty handlers cannot recover the lost app identity.
+
+On macOS, enable `"reuseWindow": true` in ttt's `settings.json` and use a ttt main build after v1.9.0 that includes file forwarding. Finder opens then reach the newest running editor for this plugin's config directory and activate its terminal app. The launcher stays out of the Dock and uses the ttt icon. With no eligible editor, folders, disabled reuse or an older ttt, it opens one terminal as usual. A failed attempted handoff shows a notification. All listed extensions, including HTML, remain available through **Open With**.
 
 ## Safety
 
