@@ -15,7 +15,7 @@ marker=$res/ttt-managed
 previous=$res/previous-handlers
 bundle_id=io.github.simonocampo1.tttlauncher
 lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-config=${3:-${TTT_CONFIG_DIR:-$HOME/.config/ttt}}
+config=${3-${TTT_CONFIG_DIR:-}}
 services() { osascript -l JavaScript "$here/services.js" "$@"; }
 
 die() {
@@ -109,7 +109,7 @@ build() {
 	plutil -replace UTExportedTypeDeclarations -json "$(services declarations "$here/extensions.txt")" "$plist"
 	cp "$here/ttt.icns" "$tmp/TTT.app/Contents/Resources/ttt.icns"
 	rm -f "$tmp/TTT.app/Contents/Resources/applet.icns" "$tmp/TTT.app/Contents/Resources/droplet.icns" "$tmp/TTT.app/Contents/Resources/Assets.car"
-	cp "$here/forward.sh" "$here/services.js" "$tmp/TTT.app/Contents/Resources/"
+	cp "$here/forward.sh" "$here/services.js" "$here/launcher.sh" "$here/extensions.txt" "$tmp/TTT.app/Contents/Resources/"
 	[ ! -f "$previous" ] || cp "$previous" "$tmp/TTT.app/Contents/Resources/previous-handlers"
 	: >"$tmp/TTT.app/Contents/Resources/ttt-managed"
 	# Editing Info.plist invalidates osacompile's ad-hoc signature.
@@ -135,8 +135,7 @@ install() {
 	if [ -z "$exe" ]; then
 		exe=$(command -v ttt) || die "cannot find the ttt executable"
 	fi
-	case $config in /*) ;; *) config=$PWD/$config ;; esac
-	config=$(services absolute "$config")
+	[ -z "$config" ] || config=$(services absolute "$config")
 	detect_terminal
 	build
 }
@@ -145,21 +144,26 @@ set_defaults() {
 	[ -e "$marker" ] || die "TTT.app is not installed; run Desktop Launcher: Repair"
 	# Optional extension arguments let Mac verification touch md/json only.
 	if [ "$#" -ge 3 ]; then shift 3; else set --; fi
+	"$lsregister" -f "$app" >/dev/null 2>&1 || true
 	utis=$(services defaults "$here/extensions.txt" "$@")
+	applied=0
 	for uti in $utis; do
 		current=$(handler "$uti")
 		if [ "$current" != "$bundle_id" ] && ! awk -v key="$uti" '$1 == key {found=1} END {exit !found}' "$previous" 2>/dev/null; then
 			printf '%s %s\n' "$uti" "$current" >>"$previous"
 		fi
 		set_handler "$uti" "$bundle_id"
+		applied=$((applied + 1))
 	done
+	skipped=$(services excluded "$here/extensions.txt" "$@")
+	printf 'Finder defaults: %s text types applied. Excluded extensions: %s\n' "$applied" "${skipped:-none}"
 }
 
 remove() {
 	[ -e "$app" ] && [ -e "$marker" ] || return 0
 	if [ -f "$previous" ]; then
 		while read -r uti prev; do
-			[ -z "$prev" ] || set_handler "$uti" "$prev"
+			if [ -n "$prev" ] && [ "$(handler "$uti")" = "$bundle_id" ]; then set_handler "$uti" "$prev"; fi
 		done <"$previous"
 	fi
 	"$lsregister" -u "$app" >/dev/null 2>&1 || true

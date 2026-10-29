@@ -6,28 +6,48 @@ function read(path) {
     var value = $.NSString.stringWithContentsOfFileEncodingError($(path), $.NSUTF8StringEncoding, null);
     return value ? value.js : '';
 }
+function absolute(path) {
+    if (path[0] !== '/') path = $.NSFileManager.defaultManager.currentDirectoryPath.js + '/' + path;
+    var parts = [];
+    path.split('/').forEach(function(p) {
+        if (p === '..') parts.pop(); else if (p && p !== '.') parts.push(p);
+    });
+    return '/' + parts.join('/');
+}
+function privateType(ext) {
+    return 'io.github.simonocampo1.tttlauncher.code.' + ext.replace(/[^a-z0-9.]/g, function(c) {
+        return '-' + c.charCodeAt(0).toString(16) + '-';
+    });
+}
+function conforms(type, parent) { return Boolean($.UTTypeConformsTo($(type), $(parent))); }
+function textType(type) {
+    return ['public.text', 'public.source-code', 'public.data', 'public.content', 'public.item',
+        'public.mpeg-2-transport-stream', 'com.microsoft.word.dot', 'cx.c3.pp-archive'].indexOf(type) < 0 &&
+        (conforms(type, 'public.text') || conforms(type, 'public.source-code')) &&
+        !['public.html', 'public.xhtml', 'public.image', 'public.audiovisual-content', 'public.archive'].some(function(p) {
+            return conforms(type, p);
+        });
+}
 function typeFor(ext) {
-    // These extensions have unrelated video, Word and archive registrations.
-    var unsafe = ['public.mpeg-2-transport-stream', 'com.microsoft.word.dot', 'cx.c3.pp-archive'];
-    for (var parent of ['public.source-code', 'public.text']) {
-        var refs = $.UTTypeCreateAllIdentifiersForTag($.kUTTagClassFilenameExtension, $(ext), $(parent));
-        var types = refs ? ObjC.deepUnwrap(ObjC.castRefToObject(refs)) : [];
-        for (var type of types) {
-            if (!/^dyn\./.test(type) && unsafe.indexOf(type) < 0 &&
-                ['public.text', 'public.source-code', 'public.data', 'public.content', 'public.item',
-                 'public.plain-text', 'public.utf8-plain-text', 'public.utf16-plain-text'].indexOf(type) < 0 &&
-                (['public.html', 'public.xhtml'].indexOf(type) < 0 || ['htm', 'html', 'xhtml', 'shtml'].indexOf(ext) >= 0)) return type;
-        }
-    }
-    return 'io.github.simonocampo1.tttlauncher.code.' + ext.replace(/\+/g, 'plus');
+    var ref = $.UTTypeCreatePreferredIdentifierForTag($.kUTTagClassFilenameExtension, $(ext), null);
+    return ref ? ObjC.castRefToObject(ref).js : '';
 }
 function run(argv) {
     var mode = argv[0];
     if (mode === 'reuse') {
-        try { return JSON.parse(read(argv[1] + '/settings.json')).reuseWindow === true ? 'yes' : 'no'; }
-        catch (_) { return 'no'; }
+        var paths = argv[1] ? [argv[1]] : [
+            $(argv[2]).stringByResolvingSymlinksInPath.stringByDeletingLastPathComponent.js + '/config',
+            $.NSHomeDirectory().js + '/.config/ttt'];
+        for (var path of paths) {
+            var value = $.NSString.stringWithContentsOfFileEncodingError($(path + '/settings.json'), $.NSUTF8StringEncoding, null);
+            if (value) {
+                try { return JSON.parse(value.js).reuseWindow === true ? 'yes' : 'no'; }
+                catch (_) { return 'no'; }
+            }
+        }
+        return 'no';
     }
-    if (mode === 'absolute') return $(argv[1]).stringByStandardizingPath.js;
+    if (mode === 'absolute') return absolute(argv[1]);
     if (mode === 'focus') {
         var app = Application.currentApplication(); app.includeStandardAdditions = true;
         var pid = Number(argv[1]);
@@ -51,13 +71,19 @@ function run(argv) {
     if (mode === 'set') return $.LSSetDefaultRoleHandlerForContentType($(argv[1]), $.kLSRolesAll, $(argv[2]));
     var extensions = read(argv[1]).trim().split(/\s+/);
     var types = extensions.map(typeFor);
-    if (mode === 'defaults') {
+    if (mode === 'defaults' || mode === 'excluded') {
         var selected = argv.slice(2);
-        return types.filter(function(t, i) {
-            return ['htm', 'html', 'xhtml', 'shtml'].indexOf(extensions[i]) < 0 &&
-                (!selected.length || selected.indexOf(extensions[i]) >= 0);
-        }).filter(function(t, i, all) { return all.indexOf(t) === i; }).join('\n');
+        return types.map(function(t, i) {
+            var safe = t && !/^dyn\./.test(t) && ['htm', 'html', 'xhtml', 'shtml'].indexOf(extensions[i]) < 0 && textType(t);
+            return (!selected.length || selected.indexOf(extensions[i]) >= 0) &&
+                (mode === 'defaults' ? safe : !safe) ? (mode === 'defaults' ? t : extensions[i]) : '';
+        }).filter(function(t, i, all) {
+            return t && all.indexOf(t) === i;
+        }).join(mode === 'defaults' ? '\n' : ', ');
     }
+    // Only undeclared/dynamic extensions need a private declaration. Defaults above
+    // use the actual resolver result again after bundle registration.
+    types = types.map(function(t, i) { return !t || /^dyn\./.test(t) ? privateType(extensions[i]) : t; });
     if (mode === 'documents') return JSON.stringify([{
         CFBundleTypeName: 'Code and text', CFBundleTypeRole: 'Editor', LSHandlerRank: 'Alternate',
         CFBundleTypeExtensions: extensions, LSItemContentTypes: types.concat(['public.folder'])
