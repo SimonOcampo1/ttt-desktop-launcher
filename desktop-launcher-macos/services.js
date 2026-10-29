@@ -29,13 +29,9 @@ function textType(type) {
         });
 }
 function typesFor(ext) {
-    var preferred = $.UTTypeCreatePreferredIdentifierForTag($.kUTTagClassFilenameExtension, $(ext), null);
-    var types = preferred ? [ObjC.castRefToObject(preferred).js] : [];
-    // A binary preferred type may coexist with a declared text association (e.g. ts).
-    [null, $('public.text')].forEach(function(parent) {
-        var refs = $.UTTypeCreateAllIdentifiersForTag($.kUTTagClassFilenameExtension, $(ext), parent);
-        if (refs) types = types.concat(ObjC.deepUnwrap(ObjC.castRefToObject(refs)));
-    });
+    // Include text associations even when a binary type is preferred (e.g. ts).
+    var refs = $.UTTypeCreateAllIdentifiersForTag($.kUTTagClassFilenameExtension, $(ext), null);
+    var types = refs ? ObjC.deepUnwrap(ObjC.castRefToObject(refs)) : [];
     return types.filter(function(t, i, all) { return t && !/^dyn\./.test(t) && all.indexOf(t) === i; });
 }
 function run(argv) {

@@ -48,7 +48,6 @@ const parents = t => {
 };
 $.UTTypeConformsTo = (t, p) => t.js === p.js || parents(t.js).includes(p.js);
 const resolved = ext => native[ext] || declared.filter(d => d.UTTypeTagSpecification['public.filename-extension'] === ext).map(d => d.UTTypeIdentifier);
-$.UTTypeCreatePreferredIdentifierForTag = (_, ext) => wrap((resolved(ext.js) || [])[0] || 'dyn.unknown');
 $.UTTypeCreateAllIdentifiersForTag = (_, ext, parent) => wrap((resolved(ext.js) || []).filter(t => !parent || $.UTTypeConformsTo(wrap(t), parent)));
 $.NSRunningApplication = {runningApplicationWithProcessIdentifier(pid) {
     log('focus ' + pid); return {activationPolicy:process.env.FOCUS_FALLBACK ? 1 : 0,
