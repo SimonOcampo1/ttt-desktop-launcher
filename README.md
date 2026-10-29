@@ -5,7 +5,7 @@ Plugins that add [ttt](https://github.com/eugenioenko/ttt) to your desktop, one 
 | Plugin | What it adds |
 |---|---|
 | `desktop-launcher-linux` | `ttt.desktop` and its icon under `$XDG_DATA_HOME` (`~/.local/share`), so ttt shows up in your app launcher and in "Open With". |
-| `desktop-launcher-macos` | `~/Applications/TTT.app`, an AppleScript applet that opens ttt and the files you double-click in Finder. **Experimental:** not yet tested on a Mac. |
+| `desktop-launcher-macos` | `~/Applications/TTT.app`, an AppleScript applet that opens ttt and the files you double-click in Finder. **Experimental.** |
 
 The launcher opens ttt in the terminal ttt was running in when you installed the plugin: kitty, WezTerm, Alacritty, Ghostty, foot or Konsole on Linux; Ghostty, kitty, WezTerm, Alacritty, iTerm or Terminal.app on macOS. On Linux, with no known terminal, the desktop picks one (`Terminal=true`).
 
@@ -35,5 +35,5 @@ The scripts only touch files they created: `ttt.desktop` carries `X-TTT-Managed=
 
 ```sh
 sh tests/linux.sh
-sh tests/macos.sh   # stubs osacompile and plutil, runs anywhere
+sh tests/macos.sh   # requires Node and Python 3; stubs macOS commands (osascript, osacompile, plutil, codesign, stat, uname), runs anywhere
 ```
