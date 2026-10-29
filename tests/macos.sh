@@ -24,6 +24,7 @@ $.NSUTF8StringEncoding = 4; $.kLSRolesAll = -1;
 $.NSString = {stringWithContentsOfFileEncodingError(p) {try {return wrap(fs.readFileSync(p.js, 'utf8'));} catch (_) {return null;}}};
 $.LSCopyDefaultRoleHandlerForContentType = t => {
     assert.equal(typeof t.js, 'string', 'CoreServices needs a bridged string');
+    if (process.env.FAIL_GET === t.js) throw Error('handler read failed');
     return wrap(state[t.js] || 'original.' + t.js);
 };
 $.LSSetDefaultRoleHandlerForContentType = (t, _, h) => {
@@ -32,15 +33,23 @@ $.LSSetDefaultRoleHandlerForContentType = (t, _, h) => {
     if (process.env.FAIL_SET === t.js) return -1;
     state[t.js] = h.js; fs.writeFileSync(process.env.TEST_STATE, JSON.stringify(state)); return 0;
 };
-$.UTTypeConformsTo = (t, p) => t.js === p.js || (['public.text','public.source-code'].includes(p.js) &&
-    (/^(net.daringfireball|example.typescript|io.github.simonocampo1|public.json|public.plain-text)/.test(t.js) || ['public.html','public.xhtml'].includes(t.js)));
-$.UTTypeCreatePreferredIdentifierForTag = (_, ext) => {
-    const types = {md:'net.daringfireball.markdown', markdown:'net.daringfireball.markdown', json:'public.json',
-        htm:'public.html', html:'public.html', xhtml:'public.xhtml', shtml:'public.html',
-        ts:process.env.TYPE_SCRIPT || 'public.mpeg-2-transport-stream', dot:'com.microsoft.word.dot', pp:'cx.c3.pp-archive', txt:'public.plain-text', phtml:'public.html'};
-    return wrap(types[ext.js] || (fs.existsSync(process.env.HOME + '/Applications/TTT.app/Contents/Resources/ttt-managed') && !process.env.UNDECLARED ?
-        'io.github.simonocampo1.tttlauncher.code.' + ext.js.replace(/[^a-z0-9.]/g,c=>'-'+c.charCodeAt(0).toString(16)+'-') : 'dyn.unknown'));
+const declarations = process.env.HOME + '/Applications/TTT.app/Contents/declared.json';
+const declared = fs.existsSync(declarations) && !process.env.UNDECLARED ? JSON.parse(fs.readFileSync(declarations)) : [];
+const native = {md:['net.daringfireball.markdown'], markdown:['net.daringfireball.markdown'], json:['public.json'],
+    htm:['public.html'], html:['public.html'], xhtml:['public.xhtml'], shtml:['public.html'], phtml:['public.html'],
+    ts:['public.mpeg-2-transport-stream', 'com.microsoft.typescript'], svg:['public.svg-image'],
+    dot:['com.microsoft.word.dot'], pp:['cx.c3.pp-archive'], txt:['public.plain-text']};
+const parents = t => {
+    const d = declared.find(d => d.UTTypeIdentifier === t);
+    if (d) return d.UTTypeConformsTo;
+    if (t === 'public.svg-image') return ['public.text','public.xml','public.image'];
+    if (t === 'com.microsoft.typescript') return ['public.text','public.source-code'];
+    return /^(net.daringfireball|public.json|public.plain-text|public.html|public.xhtml)/.test(t) ? ['public.text'] : [];
 };
+$.UTTypeConformsTo = (t, p) => t.js === p.js || parents(t.js).includes(p.js);
+const resolved = ext => native[ext] || declared.filter(d => d.UTTypeTagSpecification['public.filename-extension'] === ext).map(d => d.UTTypeIdentifier);
+$.UTTypeCreatePreferredIdentifierForTag = (_, ext) => wrap((resolved(ext.js) || [])[0] || 'dyn.unknown');
+$.UTTypeCreateAllIdentifiersForTag = (_, ext, parent) => wrap((resolved(ext.js) || []).filter(t => !parent || $.UTTypeConformsTo(wrap(t), parent)));
 $.NSRunningApplication = {runningApplicationWithProcessIdentifier(pid) {
     log('focus ' + pid); return {activationPolicy:process.env.FOCUS_FALLBACK ? 1 : 0,
         isTerminated:false, activateWithOptions(){return true;}};
@@ -67,6 +76,9 @@ STUB
 cat >"$tmp/bin/plutil" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >>"$HOME/plutil.log"
+if [ "$2" = UTExportedTypeDeclarations ]; then
+    printf '%s\n' "$4" >"$(dirname "$5")/declared.json"
+fi
 STUB
 cat >"$tmp/bin/stat" <<'STUB'
 #!/bin/sh
@@ -117,8 +129,6 @@ grep -q 'LSUIElement -bool true' "$tmp/home/plutil.log" || fail 'Dock setting'
 grep -q 'remove CFBundleIconName' "$tmp/home/plutil.log" || fail 'icon setting'
 run env GHOSTTY_RESOURCES_DIR=/x sh "$script" install /usr/local/bin/ttt
 grep -qF '/opt/my' "$applet" || fail 'install rebuilt existing app'
-run env TYPE_SCRIPT=example.typescript osascript -l JavaScript "$res/services.js" defaults "$root/desktop-launcher-macos/extensions.txt" ts >"$tmp/ts-type"
-grep -qx example.typescript "$tmp/ts-type" || fail 'valid source type not reused'
 service documents "$root/desktop-launcher-macos/extensions.txt" >"$tmp/docs.json"
 service defaults "$root/desktop-launcher-macos/extensions.txt" >"$tmp/defaults"
 service excluded "$root/desktop-launcher-macos/extensions.txt" >"$tmp/excluded"
@@ -130,15 +140,16 @@ docs=json.loads((tmp/'docs.json').read_text())[0]
 assert len(ext)==155 and docs['CFBundleTypeExtensions']==ext
 utis=(tmp/'defaults').read_text().splitlines()
 assert len(utis)==len(set(utis))
-assert 'public.plain-text' in utis
+assert {'public.plain-text','public.svg-image','com.microsoft.typescript'} <= set(utis)
+assert any(t.startswith('io.github.simonocampo1.') for t in utis), 'unknown extensions need registered declarations'
 assert not set(utis)&{'public.html','public.xhtml','public.text','public.source-code','public.data',
     'public.mpeg-2-transport-stream','com.microsoft.word.dot','cx.c3.pp-archive'}
-assert 'public.html' in docs['LSItemContentTypes']
-assert set((tmp/'excluded').read_text().strip().split(', ')) == {'htm','html','xhtml','shtml','phtml','ts','dot','pp'}
+assert {'public.html','public.svg-image','public.mpeg-2-transport-stream','com.microsoft.typescript'} <= set(docs['LSItemContentTypes'])
+assert set((tmp/'excluded').read_text().strip().split(', ')) == {'htm','html','xhtml','shtml','phtml','dot','pp'}
 PY
 [ "$(service absolute /private/tmp/a/../b)" = /private/tmp/b ] || fail 'config alias changed'
 printf 'bash_login\nc++\ncplus\n' >"$tmp/types"
-service declarations "$tmp/types" >"$tmp/private.json"
+run env UNDECLARED=1 osascript -l JavaScript "$res/services.js" declarations "$tmp/types" >"$tmp/private.json"
 [ -z "$(run env UNDECLARED=1 osascript -l JavaScript "$res/services.js" defaults "$tmp/types")" ] || fail 'unresolved types defaulted'
 python3 - "$tmp/private.json" <<'PYT'
 import json,sys,re
@@ -148,14 +159,22 @@ PYT
 mkdir -p "$tmp/bin/config" "$tmp/home/.config/ttt"
 printf '{"reuseWindow":true}' >"$tmp/home/.config/ttt/settings.json"
 [ "$(service reuse '' "$tmp/bin/ttt")" = yes ] || fail 'home settings missed'
-printf 'invalid' >"$tmp/bin/config/settings.json"
-[ "$(service reuse '' "$tmp/bin/ttt")" = no ] || fail 'invalid sidecar fell through'
+for settings in 'invalid' ''; do
+    printf '%s' "$settings" >"$tmp/bin/config/settings.json"
+    [ "$(service reuse '' "$tmp/bin/ttt")" = no ] || fail 'invalid/empty sidecar fell through'
+done
+for key in reuseWindow ReuseWindow REUSEWINDOW; do
+    printf '{"%s":true}' "$key" >"$tmp/bin/config/settings.json"
+    [ "$(service reuse '' "$tmp/bin/ttt")" = yes ] || fail "settings field $key missed"
+done
 printf '{"reuseWindow":true}' >"$tmp/bin/config/settings.json"
 [ "$(service reuse "$tmp/config" "$tmp/bin/ttt")" = no ] || fail 'override searched sidecar'
 ln -s "$tmp/bin/ttt" "$tmp/linked-ttt"
 [ "$(service reuse '' "$tmp/linked-ttt")" = yes ] || fail 'executable symlink settings missed'
 run env TTT_CONFIG_DIR= sh "$script" repair "$tmp/bin/ttt"
 grep -qF 'property configDir : ""' "$applet" || fail 'normal search forced an override'
+service defaults "$root/desktop-launcher-macos/extensions.txt" >"$tmp/repaired-defaults"
+cmp "$tmp/defaults" "$tmp/repaired-defaults" || fail 'repair lost registered text types'
 # Capture before changes, preserve first originals, preserve through repair, retry restore.
 if run env FAIL_SET=public.json sh "$script" set-defaults '' '' md json 2>/dev/null; then fail 'partial failure hidden'; fi
 grep -qx 'public.json original.public.json' "$res/previous-handlers" || fail 'failed set not journaled'
@@ -168,6 +187,9 @@ cmp "$tmp/saved" "$res/previous-handlers"
 if run env FAIL_SIGN=1 sh "$script" repair "$tmp/bin/ttt" "$tmp/config"; then fail 'sign failure hidden'; fi
 cmp "$tmp/saved" "$res/previous-handlers"
 grep -qF 'do shell script "open -na Ghostty --args -e " & cmd' "$applet" || fail 'Ghostty launch'
+if run env FAIL_GET=public.json sh "$script" remove 2>/dev/null; then fail 'handler read failure hidden'; fi
+cmp "$tmp/saved" "$res/previous-handlers"
+[ "$(service get public.json)" = io.github.simonocampo1.tttlauncher ] || fail 'handler read failure changed default'
 if run env FAIL_SET=public.json sh "$script" remove 2>/dev/null; then fail 'restore failure hidden'; fi
 [ -f "$res/previous-handlers" ] || fail 'recovery data lost'
 service set net.daringfireball.markdown later.choice >/dev/null
@@ -196,8 +218,8 @@ def base36(n):
     while n: n,r=divmod(n,36); s='0123456789abcdefghijklmnopqrstuvwxyz'[r]+s
     return s
 sel=selectors.DefaultSelector()
-for config,stamp,pid,live in [(prefix,'00000001',os.getpid(),True),(prefix,'00000002',int(sys.argv[2]),True),
-    (prefix,'00000003',int(sys.argv[2]),False),(prefix,'bad',os.getpid(),True),('othercfg','zzzzzzzz',os.getpid(),True)]:
+for config,stamp,pid,live in [(prefix,'00000001',os.getpid(),True),(prefix,'100000000',int(sys.argv[2]),True),
+    (prefix,'200000000',int(sys.argv[2]),False),(prefix,'zzzzzzzz!',os.getpid(),True),(prefix,'bad',os.getpid(),True),('othercfg','zzzzzzzz',os.getpid(),True)]:
     s=socket.socket(socket.AF_UNIX); s.bind(str(d/(config+'-'+stamp+'-'+base36(pid)+'.sock')))
     if live: s.listen(); sel.register(s,selectors.EVENT_READ)
     else: s.close()

@@ -163,7 +163,9 @@ remove() {
 	[ -e "$app" ] && [ -e "$marker" ] || return 0
 	if [ -f "$previous" ]; then
 		while read -r uti prev; do
-			if [ -n "$prev" ] && [ "$(handler "$uti")" = "$bundle_id" ]; then set_handler "$uti" "$prev"; fi
+			[ -n "$prev" ] || continue
+			current=$(handler "$uti") || die "could not read the default for $uti; keeping recovery data"
+			if [ "$current" = "$bundle_id" ]; then set_handler "$uti" "$prev"; fi
 		done <"$previous"
 	fi
 	"$lsregister" -u "$app" >/dev/null 2>&1 || true

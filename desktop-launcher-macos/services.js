@@ -24,13 +24,19 @@ function textType(type) {
     return ['public.text', 'public.source-code', 'public.data', 'public.content', 'public.item',
         'public.mpeg-2-transport-stream', 'com.microsoft.word.dot', 'cx.c3.pp-archive'].indexOf(type) < 0 &&
         (conforms(type, 'public.text') || conforms(type, 'public.source-code')) &&
-        !['public.html', 'public.xhtml', 'public.image', 'public.audiovisual-content', 'public.archive'].some(function(p) {
+        !['public.html', 'public.xhtml', 'public.audiovisual-content', 'public.archive'].some(function(p) {
             return conforms(type, p);
         });
 }
-function typeFor(ext) {
-    var ref = $.UTTypeCreatePreferredIdentifierForTag($.kUTTagClassFilenameExtension, $(ext), null);
-    return ref ? ObjC.castRefToObject(ref).js : '';
+function typesFor(ext) {
+    var preferred = $.UTTypeCreatePreferredIdentifierForTag($.kUTTagClassFilenameExtension, $(ext), null);
+    var types = preferred ? [ObjC.castRefToObject(preferred).js] : [];
+    // A binary preferred type may coexist with a declared text association (e.g. ts).
+    [null, $('public.text')].forEach(function(parent) {
+        var refs = $.UTTypeCreateAllIdentifiersForTag($.kUTTagClassFilenameExtension, $(ext), parent);
+        if (refs) types = types.concat(ObjC.deepUnwrap(ObjC.castRefToObject(refs)));
+    });
+    return types.filter(function(t, i, all) { return t && !/^dyn\./.test(t) && all.indexOf(t) === i; });
 }
 function run(argv) {
     var mode = argv[0];
@@ -41,7 +47,16 @@ function run(argv) {
         for (var path of paths) {
             var value = $.NSString.stringWithContentsOfFileEncodingError($(path + '/settings.json'), $.NSUTF8StringEncoding, null);
             if (value) {
-                try { return JSON.parse(value.js).reuseWindow === true ? 'yes' : 'no'; }
+                try {
+                    var settings = JSON.parse(value.js), reuse = false;
+                    Object.keys(settings).forEach(function(key) {
+                        if (key.replace(/\u017f/g, 's').toLowerCase() === 'reusewindow' && settings[key] !== null) {
+                            if (typeof settings[key] !== 'boolean') throw Error('invalid reuseWindow');
+                            reuse = settings[key];
+                        }
+                    });
+                    return reuse ? 'yes' : 'no';
+                }
                 catch (_) { return 'no'; }
             }
         }
@@ -70,27 +85,32 @@ function run(argv) {
     }
     if (mode === 'set') return $.LSSetDefaultRoleHandlerForContentType($(argv[1]), $.kLSRolesAll, $(argv[2]));
     var extensions = read(argv[1]).trim().split(/\s+/);
-    var types = extensions.map(typeFor);
+    var types = extensions.map(typesFor);
     if (mode === 'defaults' || mode === 'excluded') {
-        var selected = argv.slice(2);
-        return types.map(function(t, i) {
-            var safe = t && !/^dyn\./.test(t) && ['htm', 'html', 'xhtml', 'shtml'].indexOf(extensions[i]) < 0 && textType(t);
-            return (!selected.length || selected.indexOf(extensions[i]) >= 0) &&
-                (mode === 'defaults' ? safe : !safe) ? (mode === 'defaults' ? t : extensions[i]) : '';
-        }).filter(function(t, i, all) {
-            return t && all.indexOf(t) === i;
-        }).join(mode === 'defaults' ? '\n' : ', ');
+        var selected = argv.slice(2), result = [];
+        types.forEach(function(resolved, i) {
+            if (selected.length && selected.indexOf(extensions[i]) < 0) return;
+            var safe = ['htm', 'html', 'xhtml', 'shtml'].indexOf(extensions[i]) < 0 ? resolved.filter(textType) : [];
+            result = result.concat(mode === 'defaults' ? safe : (safe.length ? [] : [extensions[i]]));
+        });
+        return result.filter(function(t, i, all) { return all.indexOf(t) === i; }).join(mode === 'defaults' ? '\n' : ', ');
     }
-    // Only undeclared/dynamic extensions need a private declaration. Defaults above
-    // use the actual resolver result again after bundle registration.
-    types = types.map(function(t, i) { return !t || /^dyn\./.test(t) ? privateType(extensions[i]) : t; });
+    // Only genuinely undeclared extensions need a private declaration. Recheck
+    // actual associations after registration before choosing defaults.
+    var declarations = [];
+    types = types.reduce(function(all, resolved, i) {
+        var type = privateType(extensions[i]);
+        if (!resolved.length || resolved.every(function(t) { return t === type; })) {
+            declarations.push({ UTTypeIdentifier: type, UTTypeConformsTo: ['public.source-code'],
+                UTTypeTagSpecification: { 'public.filename-extension': extensions[i] } });
+            resolved = [type];
+        }
+        return all.concat(resolved);
+    }, []);
     if (mode === 'documents') return JSON.stringify([{
         CFBundleTypeName: 'Code and text', CFBundleTypeRole: 'Editor', LSHandlerRank: 'Alternate',
-        CFBundleTypeExtensions: extensions, LSItemContentTypes: types.concat(['public.folder'])
+        CFBundleTypeExtensions: extensions, LSItemContentTypes: types.filter(function(t, i, all) { return all.indexOf(t) === i; }).concat(['public.folder'])
     }]);
-    if (mode === 'declarations') return JSON.stringify(types.map(function(t, i) {
-        return { UTTypeIdentifier: t, UTTypeConformsTo: ['public.source-code'],
-            UTTypeTagSpecification: { 'public.filename-extension': extensions[i] } };
-    }).filter(function(t) { return t.UTTypeIdentifier.indexOf('io.github.simonocampo1.tttlauncher.code.') === 0; }));
+    if (mode === 'declarations') return JSON.stringify(declarations);
     throw Error('unknown services operation: ' + mode);
 }
