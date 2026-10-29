@@ -18,10 +18,10 @@ dir=${temp%/}/ttt-$(id -u)
 # Read lines rather than splitting the temp directory or socket path on spaces.
 selected=$(find "$dir" -type s -name "$prefix-*.sock" -print | LC_ALL=C sort -r | while IFS= read -r socket; do
 	name=${socket##*/}; name=${name#"$prefix-"}; stamp=${name%-*}
-	case $stamp in ????????*) ;; *) continue ;; esac
-	case $stamp in *[!0-9a-z]*) continue ;; esac
+	case $stamp in (????????*) ;; (*) continue ;; esac
+	case $stamp in (*[!0-9a-z]*) continue ;; esac
 	encoded=${name#*-}; encoded=${encoded%.sock}
-	case $encoded in ''|*[!0-9a-z]*) continue ;; esac
+	case $encoded in (''|*[!0-9a-z]*) continue ;; esac
 	candidate=$(printf '%s\n' "$encoded" | awk '{n=0; for(i=1;i<=length;i++) n=n*36+index("0123456789abcdefghijklmnopqrstuvwxyz",substr($0,i,1))-1; printf "%.0f",n}')
 	if [ "$candidate" -le 0 ] || [ "$candidate" -gt 2147483647 ] || ! kill -0 "$candidate" 2>/dev/null; then continue; fi
 	/usr/bin/nc -U -w 1 "$socket" </dev/null >/dev/null 2>&1 || continue
