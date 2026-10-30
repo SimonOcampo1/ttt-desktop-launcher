@@ -9,6 +9,7 @@ script=$tmp/plugin/launcher.sh
 trap '[ -z "$fixture" ] || { kill "$fixture" 2>/dev/null || true; wait "$fixture" 2>/dev/null || true; }; rm -rf "$tmp"' EXIT
 export TEST_BRIDGE="$tmp/bridge.js" TEST_STATE="$tmp/state.json" TEST_LOG="$tmp/events"
 mkdir -p "$tmp/bin" "$tmp/home" "$tmp/config" "$tmp/temp with spaces"
+ln -s "$(command -v node)" "$tmp/bin/node"
 cat >"$TEST_BRIDGE" <<'STUB'
 const fs = require('fs'), vm = require('vm'), assert = require('assert'), path = require('path');
 const [script, ...args] = process.argv.slice(4);
@@ -51,9 +52,9 @@ const resolved = ext => native[ext] || declared.filter(d => d.UTTypeTagSpecifica
 $.UTTypeCreateAllIdentifiersForTag = (_, ext, parent) => wrap((resolved(ext.js) || []).filter(t => !parent || $.UTTypeConformsTo(wrap(t), parent)));
 $.NSRunningApplication = {runningApplicationWithProcessIdentifier(pid) {
     log('focus ' + pid); return {activationPolicy:process.env.FOCUS_FALLBACK ? 1 : 0,
-        isTerminated:false, activateWithOptions(){return true;}};
+        isTerminated:false, activateWithOptions(){log('activate pid ' + pid); return true;}};
 }, runningApplicationsWithBundleIdentifier(id) {
-    return {count:1, objectAtIndex(){return {activateWithOptions(){log('activate ' + id.js);}};}};
+    return {count:1, objectAtIndex(){return {activateWithOptions(){log('activate ' + id.js); return true;}};}};
 }};
 const context = { $, ObjC:{import(){}, castRefToObject:x=>x, deepUnwrap:x=>x.js},
     Application:{currentApplication(){return {doShellScript(){return '1';}};}} };
@@ -117,7 +118,7 @@ app=$tmp/home/Applications/TTT.app
 res=$app/Contents/Resources
 applet=$res/script.applescript
 fail() { echo "FAIL: $*" >&2; exit 1; }
-run() { env -u TTT_CONFIG_DIR -u KITTY_WINDOW_ID -u WEZTERM_PANE -u ALACRITTY_WINDOW_ID -u GHOSTTY_RESOURCES_DIR -u TERM_PROGRAM HOME="$tmp/home" PATH="$tmp/bin:$PATH" TMPDIR="$tmp/temp with spaces/" "$@"; }
+run() { env -u HERDR_ENV -u TTT_LAUNCHER_TERMINAL -u TTT_CONFIG_DIR -u KITTY_WINDOW_ID -u WEZTERM_PANE -u ALACRITTY_WINDOW_ID -u GHOSTTY_RESOURCES_DIR -u TERM_PROGRAM HOME="$tmp/home" PATH="$tmp/bin:$PATH" TMPDIR="$tmp/temp with spaces/" "$@"; }
 service() { run osascript -l JavaScript "$root/desktop-launcher-macos/services.js" "$@"; }
 run sh "$script" install '/opt/my "apps"/ttt' "$tmp/config"
 grep -qF 'property tttExe : "/opt/my \"apps\"/ttt"' "$applet" || fail 'exe quoting'
@@ -128,6 +129,92 @@ grep -q 'LSUIElement -bool true' "$tmp/home/plutil.log" || fail 'Dock setting'
 grep -q 'remove CFBundleIconName' "$tmp/home/plutil.log" || fail 'icon setting'
 run env GHOSTTY_RESOURCES_DIR=/x sh "$script" install /usr/local/bin/ttt
 grep -qF '/opt/my' "$applet" || fail 'install rebuilt existing app'
+# Herdr takes precedence over the terminal hosting its client. The generated
+# app must retain a normal terminal fallback and an absolute CLI path.
+cat >"$tmp/bin/herdr" <<'STUB'
+#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['TEST_LOG'], 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\n')
+if os.environ.get('HERDR_FAIL') == sys.argv[1]: sys.exit(1)
+if sys.argv[1] == 'tab': print(os.environ.get('HERDR_REPLY', '{"result":{"root_pane":{"pane_id":"w9:p3"}}}'))
+STUB
+chmod +x "$tmp/bin/herdr"
+run env HERDR_ENV=1 GHOSTTY_RESOURCES_DIR=/x sh "$script" repair "$tmp/bin/ttt"
+grep -qF 'property terminalHost : "Ghostty"' "$applet" || fail 'Herdr host detection'
+grep -qF 'property terminalApp : "Ghostty"' "$applet" || fail 'Herdr forwarding host'
+grep -qF "property herdrExe : \"$tmp/bin/herdr\"" "$applet" || fail 'absolute Herdr path'
+grep -qF 'path to resource "herdr.sh"' "$applet" || fail 'Herdr runtime missing'
+grep -qF 'on error' "$applet" || fail 'Herdr error fallback missing'
+grep -qF 'do shell script "open -na Ghostty --args -e " & cmd' "$applet" || fail 'Herdr lost Ghostty fallback'
+mv "$tmp/bin/herdr" "$tmp/herdr"
+run env HERDR_ENV=1 GHOSTTY_RESOURCES_DIR=/x PATH="$tmp/bin:/usr/bin:/bin" sh "$script" repair "$tmp/bin/ttt"
+grep -qF 'property terminalApp : "Ghostty"' "$applet" || fail 'missing Herdr did not fall through'
+grep -qF 'property herdrExe : ""' "$applet" || fail 'missing Herdr still selected'
+mv "$tmp/herdr" "$tmp/bin/herdr"
+for pair in ghostty:Ghostty kitty:kitty wezterm:WezTerm alacritty:Alacritty iterm:iTerm terminal:Terminal; do
+    override=${pair%:*}; expected=${pair#*:}
+    run env HERDR_ENV=1 GHOSTTY_RESOURCES_DIR=/x TTT_LAUNCHER_TERMINAL="$override" sh "$script" repair "$tmp/bin/ttt"
+    grep -qF "property terminalApp : \"$expected\"" "$applet" || fail "override $override ignored"
+    grep -qF 'property herdrExe : ""' "$applet" || fail "override $override still selected Herdr"
+done
+run env TTT_LAUNCHER_TERMINAL=herdr sh "$script" repair "$tmp/bin/ttt"
+grep -qF "property herdrExe : \"$tmp/bin/herdr\"" "$applet" || fail 'explicit Herdr ignored'
+grep -qF 'property terminalHost : ""' "$applet" || fail 'unknown Herdr host guessed'
+grep -qF 'tell application "Terminal"' "$applet" || fail 'Herdr lost Terminal fallback'
+cp "$applet" "$tmp/before-invalid"
+if run env TTT_LAUNCHER_TERMINAL=invalid sh "$script" repair "$tmp/bin/ttt" 2>/dev/null; then fail 'invalid override accepted'; fi
+cmp "$tmp/before-invalid" "$applet" || fail 'invalid override replaced app'
+# Runtime boundary: exact cwd and command survive shell metacharacters, spaces
+# and newlines. No jq or shell evaluation of the Herdr reply is involved.
+mkdir -p "$tmp/a 'quoted' directory"
+command="env TTT_CONFIG_DIR='' '/opt/my ttt' --welcome 'a; \$(touch nope)'"
+: >"$TEST_LOG"
+run sh "$res/herdr.sh" "$tmp/bin/herdr" "$command" Ghostty "$tmp/a 'quoted' directory/file.md"
+python3 - "$TEST_LOG" "$tmp" "$command" <<'PY'
+import json, pathlib, sys
+lines=pathlib.Path(sys.argv[1]).read_text().splitlines()
+assert json.loads(lines[0])==['tab','create','--focus','--cwd',sys.argv[2]+"/a 'quoted' directory",'--label','ttt']
+assert json.loads(lines[1])==['pane','run','w9:p3',sys.argv[3]]
+assert lines[2]=='activate com.mitchellh.ghostty'
+PY
+: >"$TEST_LOG"
+run sh "$res/herdr.sh" "$tmp/bin/herdr" "$command" ''
+python3 - "$TEST_LOG" "$tmp/home" <<'PY'
+import json, pathlib, sys
+lines=pathlib.Path(sys.argv[1]).read_text().splitlines()
+assert json.loads(lines[0])[4]==sys.argv[2]
+assert len(lines)==2, 'unknown host must skip activation'
+PY
+for failure in tab pane; do
+    if run env HERDR_FAIL="$failure" sh "$res/herdr.sh" "$tmp/bin/herdr" "$command" Ghostty 2>/dev/null; then fail "Herdr $failure failure hidden"; fi
+done
+for reply in invalid '{}' '{"result":{"root_pane":{"pane_id":""}}}'; do
+    if run env HERDR_REPLY="$reply" sh "$res/herdr.sh" "$tmp/bin/herdr" "$command" Ghostty 2>/dev/null; then fail 'invalid Herdr reply accepted'; fi
+done
+# Property: passing any shell command as one argument never evaluates or
+# changes it before pane run; directory names remain one cwd argument.
+run python3 - "$res/herdr.sh" "$tmp" <<'PY'
+import json, os, pathlib, random, subprocess, sys
+helper, tmp = sys.argv[1], pathlib.Path(sys.argv[2])
+rng=random.Random(61030)
+alphabet="abc XYZ'\"\\;$`()[]*?\n\t日本語"
+for i in range(12):
+    command=''.join(rng.choices(alphabet, k=rng.randrange(1, 200)))
+    # Named regression: a parent directory ending in a newline must survive.
+    directory=tmp/('trailing-newline\n' if i == 0 else ''.join(rng.choices(alphabet, k=rng.randrange(1, 40))))
+    directory.mkdir(exist_ok=True)
+    pathlib.Path(os.environ['TEST_LOG']).write_text('')
+    subprocess.run(['sh', helper, str(tmp/'bin/herdr'), command, '', str(directory/'file.md')], check=True)
+    calls=pathlib.Path(os.environ['TEST_LOG']).read_text().splitlines()
+    assert json.loads(calls[0])[4]==str(directory), repr(directory)
+    assert json.loads(calls[1])==['pane','run','w9:p3',command]
+PY
+: >"$TEST_LOG"
+service focus 42 Ghostty >/dev/null
+grep -qx 'activate pid 42' "$TEST_LOG" || fail 'actual editor ancestry ignored'
+: >"$TEST_LOG"
+run env FOCUS_FALLBACK=1 osascript -l JavaScript "$res/services.js" focus 42 Ghostty >/dev/null
+grep -qx 'activate com.mitchellh.ghostty' "$TEST_LOG" || fail 'Herdr host fallback not activated'
 service documents "$root/desktop-launcher-macos/extensions.txt" >"$tmp/docs.json"
 service defaults "$root/desktop-launcher-macos/extensions.txt" >"$tmp/defaults"
 service excluded "$root/desktop-launcher-macos/extensions.txt" >"$tmp/excluded"

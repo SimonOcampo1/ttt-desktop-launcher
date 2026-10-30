@@ -41,10 +41,20 @@ detect_terminal() {
 	elif [ -n "${ALACRITTY_WINDOW_ID:-}" ]; then
 		open_app=Alacritty open_args='-e'
 	fi
+	choice=${TTT_LAUNCHER_TERMINAL:-auto}
+	case $choice in
+	auto | herdr) ;; # Keep the detected terminal as Herdr's fallback.
+	ghostty) open_app=Ghostty open_args='-e' ;;
+	kitty) open_app=kitty open_args='' ;;
+	wezterm) open_app=WezTerm open_args='start --' ;;
+	alacritty) open_app=Alacritty open_args='-e' ;;
+	iterm | terminal) open_app='' ;;
+	*) die "unknown TTT_LAUNCHER_TERMINAL: $TTT_LAUNCHER_TERMINAL" ;;
+	esac
 	if [ -n "$open_app" ]; then
 		terminal=$open_app
 		launch="do shell script \"open -na $open_app --args $open_args \" & cmd"
-	elif [ "${TERM_PROGRAM:-}" = iTerm.app ]; then
+	elif [ "$choice" = iterm ] || { [ "$choice" != terminal ] && [ "${TERM_PROGRAM:-}" = iTerm.app ]; }; then
 		terminal=iTerm
 		launch='tell application "iTerm"
 		activate
@@ -56,6 +66,20 @@ detect_terminal() {
 		do script cmd
 	end tell'
 	fi
+	host_terminal=$terminal
+	if [ "$terminal" = Terminal ] && [ "${TERM_PROGRAM:-}" != Apple_Terminal ]; then host_terminal=''; fi
+	herdr_exe=''
+	if [ "$choice" = herdr ] || { [ "$choice" = auto ] && [ "${HERDR_ENV:-}" = 1 ]; }; then
+		if herdr_exe=$(command -v herdr); then
+			# command -v may return a relative PATH entry; launchd needs absolute.
+			case $herdr_exe in /*) ;; *) herdr_exe="$PWD/$herdr_exe" ;; esac
+			launch="try
+		do shell script \"/bin/sh \" & quoted form of POSIX path of (path to resource \"herdr.sh\") & \" \" & quoted form of herdrExe & \" \" & quoted form of cmd & \" \" & quoted form of terminalHost & \" \" & quoted form of firstPath
+	on error
+		$launch
+	end try"
+		fi
+	fi
 }
 
 applet() {
@@ -63,6 +87,8 @@ applet() {
 property tttExe : $(applescript_string "$exe")
 property configDir : $(applescript_string "$config")
 property terminalApp : $(applescript_string "$terminal")
+property terminalHost : $(applescript_string "$host_terminal")
+property herdrExe : $(applescript_string "$herdr_exe")
 
 on run
 	launchTTT({})
@@ -76,7 +102,9 @@ on launchTTT(theItems)
 	set resources to POSIX path of (path to resource "forward.sh")
 	set forwardCmd to "/bin/sh " & quoted form of resources & " " & quoted form of tttExe & " " & quoted form of configDir & " " & quoted form of terminalApp
 	set cmd to "env TTT_CONFIG_DIR=" & quoted form of configDir & " " & quoted form of tttExe & " --welcome"
+	set firstPath to ""
 	repeat with f in theItems
+		if firstPath is "" then set firstPath to POSIX path of f
 		set cmd to cmd & " " & quoted form of POSIX path of f
 		set forwardCmd to forwardCmd & " " & quoted form of POSIX path of f
 	end repeat
@@ -109,7 +137,7 @@ build() {
 	plutil -replace UTExportedTypeDeclarations -json "$(services declarations "$here/extensions.txt")" "$plist"
 	cp "$here/ttt.icns" "$tmp/TTT.app/Contents/Resources/ttt.icns"
 	rm -f "$tmp/TTT.app/Contents/Resources/applet.icns" "$tmp/TTT.app/Contents/Resources/droplet.icns" "$tmp/TTT.app/Contents/Resources/Assets.car"
-	cp "$here/forward.sh" "$here/services.js" "$here/launcher.sh" "$here/extensions.txt" "$tmp/TTT.app/Contents/Resources/"
+	cp "$here/forward.sh" "$here/herdr.sh" "$here/services.js" "$here/launcher.sh" "$here/extensions.txt" "$tmp/TTT.app/Contents/Resources/"
 	[ ! -f "$previous" ] || cp "$previous" "$tmp/TTT.app/Contents/Resources/previous-handlers"
 	: >"$tmp/TTT.app/Contents/Resources/ttt-managed"
 	# Editing Info.plist invalidates osacompile's ad-hoc signature.

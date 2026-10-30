@@ -27,6 +27,8 @@ Both plugins ask for two permissions: registering commands, and running `sh`, wh
 
 On macOS, enable `"reuseWindow": true` in ttt's `settings.json` and use a ttt main build after v1.9.0 that includes file forwarding. Finder opens then reach the newest running editor for the same ttt config directory and activate its terminal app. The launcher stays out of the Dock and uses the ttt icon. With no eligible editor, folders, disabled reuse or an older ttt, it opens one terminal as usual. A failed attempted handoff shows a notification. All listed extensions, including HTML, remain available through **Open With**.
 
+On macOS, installing or repairing inside legacy herdr (`HERDR_ENV=1`, with `herdr` on PATH) makes cold launches open a new tab in its running session and activate its detected host terminal, such as Ghostty, without opening a new terminal window. The tab starts in the first item's directory, or your home directory with no files. Herdr errors fall back to the detected terminal or Terminal.app; forwarding activates the host terminal without selecting a pane. To override detection, start `TTT_LAUNCHER_TERMINAL=herdr ttt`, then run **Desktop Launcher: Repair**. Other values are `ghostty`, `kitty`, `wezterm`, `alacritty`, `iterm`, `terminal`, and `auto`. The app saves the choice; herdr needs its CLI at repair time and a running server at launch time. The separate Herdr.app system is not supported.
+
 ## Safety
 
 The scripts only touch files they created: `ttt.desktop` carries `X-TTT-Managed=true`, and `TTT.app` carries a `ttt-managed` marker. If you already have your own `ttt.desktop` or `TTT.app`, install fails without changing it.

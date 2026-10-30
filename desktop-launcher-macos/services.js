@@ -36,6 +36,11 @@ function typesFor(ext) {
 }
 function run(argv) {
     var mode = argv[0];
+    if (mode === 'herdr-pane') {
+        var pane = JSON.parse(argv[1]).result.root_pane.pane_id;
+        if (typeof pane !== 'string' || !pane) throw Error('invalid Herdr pane');
+        return pane;
+    }
     if (mode === 'reuse') {
         var paths = argv[1] ? [argv[1]] : [
             $(argv[2]).stringByResolvingSymlinksInPath.stringByDeletingLastPathComponent.js + '/config',
