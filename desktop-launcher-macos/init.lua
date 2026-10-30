@@ -8,12 +8,13 @@ local function launcher(action)
     local msg = res.stderr:gsub("%s+$", "")
     error(msg ~= "" and msg or ("launcher.sh " .. action .. " failed"), 0)
   end
+  return res.stdout:gsub("%s+$", "")
 end
 
 local function command(action, done)
   return function()
     local ok, err = pcall(launcher, action)
-    ttt.notify(ok and done or ("Desktop launcher: " .. tostring(err)))
+    ttt.notify(ok and (err ~= "" and err or done) or ("Desktop launcher: " .. tostring(err)))
   end
 end
 
@@ -29,8 +30,8 @@ ttt.register({
     },
     {
       id = "desktopLauncher.setDefaults",
-      title = "Desktop Launcher: Open Markdown and JSON with ttt",
-      handler = command("set-defaults", "Finder now opens Markdown and JSON files in ttt"),
+      title = "Desktop Launcher: Open code files with ttt",
+      handler = command("set-defaults", "Finder now opens code files in ttt"),
     },
   },
 })
